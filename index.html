@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CS IM 聊天室</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #f6f7fb; color: #0f172a; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(1080px, calc(100% - 28px)); margin: 0 auto; padding: 24px 0 36px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+    p { margin: 6px 0 0; color: #64748b; font-size: 14px; }
+    .status { display: inline-flex; align-items: center; gap: 8px; height: 32px; border-radius: 999px; border: 1px solid #e2e8f0; background: white; padding: 0 14px; font-size: 13px; font-weight: 600; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; }
+    .dot.ok { background: #22c55e; }
+    .dot.error { background: #ef4444; }
+    .chat { height: calc(100vh - 150px); min-height: 520px; display: flex; flex-direction: column; overflow: hidden; background: white; border: 1px solid #e2e8f0; border-radius: 22px; box-shadow: 0 24px 70px -50px rgba(15, 23, 42, .55); }
+    .top { padding: 16px 18px; border-bottom: 1px solid #edf2f7; display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+    .top strong { font-size: 15px; }
+    .meta { color: #64748b; font-size: 12px; overflow-wrap: anywhere; }
+    .messages { flex: 1; overflow: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+    .message { max-width: min(76%, 620px); display: flex; gap: 10px; }
+    .message.customer { margin-right: auto; }
+    .message.agent { margin-left: auto; flex-direction: row-reverse; }
+    .bubble { padding: 10px 13px; border-radius: 16px; border: 1px solid #edf2f7; background: #f8fafc; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+    .message.agent .bubble { background: #eff6ff; border-color: #dbeafe; }
+    .meta-line { margin-top: 5px; color: #94a3b8; font-size: 11px; }
+    .empty { flex: 1; display: grid; place-items: center; color: #94a3b8; text-align: center; padding: 24px; }
+    .composer { padding: 14px; border-top: 1px solid #edf2f7; background: white; }
+    textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid #cbd5e1; border-radius: 14px; padding: 12px; font-size: 14px; line-height: 1.6; font-family: inherit; outline: none; }
+    textarea:focus { border-color: #94a3b8; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+    .hint { font-size: 12px; color: #94a3b8; }
+    .controls { display: flex; gap: 8px; align-items: center; }
+    input, select { height: 36px; border: 1px solid #cbd5e1; border-radius: 10px; padding: 0 10px; font-size: 13px; background: white; }
+    button { border: 0; border-radius: 10px; background: #0f172a; color: white; height: 36px; padding: 0 15px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    button.secondary { background: #f1f5f9; color: #0f172a; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    @media (max-width: 720px) { .chat { height: calc(100vh - 120px); } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>CS IM 聊天室</h1>
+        <p>独立前端联调 Demo，自动创建 App、客户和会话。</p>
+      </div>
+      <div class="status"><span id="dot" class="dot"></span><span id="status">初始化</span></div>
+    </header>
+
+    <section class="chat">
+      <div class="top">
+        <div>
+          <strong>Demo 会话</strong>
+          <div class="meta" id="sessionInfo">等待初始化</div>
+          <div class="meta conv-id" id="convIdDisplay" title="点击复制会话 ID" style="cursor:pointer; color:#2563eb; font-weight:600;"></div>
+        </div>
+        <div class="controls">
+          <input id="token" value="dev-access-token" spellcheck="false">
+          <input id="joinConvId" placeholder="粘贴会话 ID" spellcheck="false" style="width:220px">
+          <button id="join" class="secondary">加入会话</button>
+          <button id="refresh" class="secondary">加载更早</button>
+          <button id="reset" class="secondary">重新初始化</button>
+        </div>
+      </div>
+
+      <div class="messages" id="messages">
+        <div class="empty">正在创建会话...</div>
+      </div>
+
+      <div class="composer">
+        <textarea id="input" placeholder="输入消息，Enter 发送，Shift + Enter 换行"></textarea>
+        <div class="row">
+          <span class="hint">Enter 发送</span>
+          <div class="controls">
+            <select id="role">
+              <option value="customer">客户发送</option>
+              <option value="agent">客服发送</option>
+            </select>
+            <button id="send">发送</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const messagesEl = $('messages');
+  const inputEl = $('input');
+  const state = { appId: '', customerId: '', conversationId: '', lastSeq: 0, oldestSeq: 0, hasMore: true, messageMap: new Map(), sending: false };
+  let realtimeController = null;
+
+  function setStatus(text, kind = 'pending') {
+    $('status').textContent = text;
+    $('dot').className = `dot ${kind}`;
+  }
+  function log(value) { console.log(value); }
+  function escapeHtml(value) {
+    return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  }
+  async function call(name, path, options = {}) {
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${$('token').value.trim()}`,
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      },
+    });
+    const text = await response.text();
+    let body;
+    try { body = JSON.parse(text); } catch { body = { code: 'UNKNOWN', message: text }; }
+    if (!response.ok || body.code !== 'OK') {
+      throw new Error(`${name} failed: ${response.status} ${body.code || ''} ${body.message || ''}`);
+    }
+    log(`${name}:`, body.data);
+    return body.data;
+  }
+  function roleLabel(role) {
+    return { customer: '客户', agent: '客服', ai: 'AI', system: '系统' }[role] || role;
+  }
+  function renderMessages() {
+    const items = [...state.messageMap.values()].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+    if (!items.length) {
+      messagesEl.innerHTML = '<div class="empty">暂无消息，发送第一条开始联调</div>';
+      return;
+    }
+    messagesEl.innerHTML = items.map((item) => {
+      const role = item.sender?.role || 'system';
+      const time = item.createdAt ? new Date(item.createdAt).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+      return `
+        <div class="message ${role}">
+          <div class="bubble">
+            <div>${escapeHtml(item.text || '')}</div>
+            <div class="meta-line">${escapeHtml(roleLabel(role))} · ${escapeHtml(time)} · ${escapeHtml(item.status || 'received')}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+  function upsertMessage(message) {
+    if (message?.messageId) {
+      state.messageMap.set(message.messageId, message);
+      if (message.seq > state.lastSeq) state.lastSeq = message.seq;
+      if (state.oldestSeq === 0 || message.seq < state.oldestSeq) state.oldestSeq = message.seq;
+      renderMessages();
+    }
+  }
+  async function loadMessages() {
+    if (!state.hasMore) return;
+    const suffix = state.lastSeq > 0 ? `?afterSeq=${state.lastSeq}` : '';
+    const items = await call('load messages', `/api/v1/conversations/${state.conversationId}/messages${suffix}`);
+    items.forEach(upsertMessage);
+    renderMessages();
+  }
+  async function loadOlderMessages() {
+    if (!state.hasMore || !state.oldestSeq) return;
+    const url = `/api/v1/conversations/${state.conversationId}/messages?beforeSeq=${state.oldestSeq}&limit=20`;
+    const items = await call('load older messages', url);
+    if (items.length === 0) {
+      state.hasMore = false;
+      return;
+    }
+    items.forEach(upsertMessage);
+    renderMessages();
+  }
+  async function loadLatestPage() {
+    const url = `/api/v1/conversations/${state.conversationId}/messages?limit=20`;
+    const items = await call('load latest page', url);
+    if (items.length < 20) state.hasMore = false;
+    items.forEach(upsertMessage);
+    renderMessages();
+  }
+  async function sendMessage(role) {
+    const text = inputEl.value.trim();
+    if (!text || state.sending) return;
+    if (role !== 'customer') {
+      setStatus('Demo 渠道只能发送客户消息', 'error');
+      return;
+    }
+    state.sending = true;
+    $('send').disabled = true;
+    try {
+      const externalID = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const message = await call('send customer message', `/api/v1/channels/${state.appId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({
+          conversationId: state.conversationId,
+          customerId: state.customerId,
+          sender: { role: 'customer', id: state.customerId },
+          type: 'text',
+          text,
+          source: {
+            appId: state.appId,
+            externalId: externalID,
+            sentAt: new Date().toISOString(),
+          },
+        }),
+      });
+      upsertMessage(message);
+      inputEl.value = '';
+      inputEl.focus();
+    } catch (error) {
+      setStatus('发送失败', 'error');
+      console.error(error);
+    } finally {
+      state.sending = false;
+      $('send').disabled = false;
+    }
+  }
+  async function connectRealtime() {
+    try {
+      realtimeController = new AbortController();
+      const response = await fetch(`/api/v1/channels/${state.appId}/realtime`, {
+        headers: { Authorization: `Bearer ${$('token').value.trim()}` },
+        signal: realtimeController.signal,
+      });
+      if (!response.ok || !response.body) throw new Error(`realtime failed: ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary >= 0) {
+          const frame = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          boundary = buffer.indexOf('\n\n');
+          const line = frame.split('\n').find((item) => item.startsWith('data: '));
+          if (!line) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'message.created' || event.type === 'message.status_changed') upsertMessage(event.data);
+          } catch (error) { log('event parse error', error); }
+        }
+      }
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      setStatus('实时连接断开', 'error');
+      console.error(error);
+    }
+  }
+  async function initialize() {
+    try {
+      if (realtimeController) realtimeController.abort();
+      setStatus('初始化中');
+      state.messageMap.clear();
+      state.lastSeq = 0;
+      state.oldestSeq = 0;
+      state.hasMore = true;
+      renderMessages();
+      const app = await call('register app', '/api/v1/apps/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          serviceKey: `demo-chat-${Date.now()}`,
+          displayName: 'Demo Chat Frontend',
+          kind: 'inbound',
+          version: '0.1.0',
+          capabilities: ['text'],
+        }),
+      });
+      state.appId = app.appId;
+      await call('heartbeat', '/api/v1/apps/heartbeat', {
+        method: 'POST',
+        body: JSON.stringify({ appId: state.appId, instanceId: 'demo-chat', ttlSeconds: 300 }),
+      });
+
+      const customer = await call('create customer', '/api/v1/customers', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'Demo Customer', channel: 'demo-chat' }),
+      });
+      state.customerId = customer.customerId;
+
+      const conversation = await call('create conversation', '/api/v1/conversations', {
+        method: 'POST',
+        body: JSON.stringify({
+          appId: state.appId,
+          customerId: state.customerId,
+          channel: 'demo-chat',
+          subject: 'Demo Chat',
+        }),
+      });
+      state.conversationId = conversation.conversationId;
+      $('sessionInfo').textContent = `${state.appId} · ${state.customerId} · ${state.conversationId}`;
+      $('convIdDisplay').textContent = `会话 ID: ${state.conversationId}`;
+      saveSession();
+
+      await loadLatestPage();
+      saveSession();
+      setStatus('已连接', 'ok');
+      connectRealtime();
+      inputEl.focus();
+    } catch (error) {
+      setStatus('连接失败', 'error');
+      messagesEl.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    }
+  }
+  function saveSession() {
+    try {
+      localStorage.setItem('cs-im-session', JSON.stringify({
+        appId: state.appId,
+        customerId: state.customerId,
+        conversationId: state.conversationId,
+        lastSeq: state.lastSeq,
+      }));
+    } catch (_) {}
+  }
+  function restoreSession() {
+    try {
+      const raw = localStorage.getItem('cs-im-session');
+      if (!raw) return false;
+      const saved = JSON.parse(raw);
+      if (!saved.conversationId) return false;
+      state.appId = saved.appId;
+      state.customerId = saved.customerId;
+      state.conversationId = saved.conversationId;
+      state.lastSeq = saved.lastSeq ?? 0;
+      state.oldestSeq = 0;
+      state.hasMore = true;
+      return true;
+    } catch (_) { return false; }
+  }
+  async function reconnect() {
+    try {
+      if (realtimeController) realtimeController.abort();
+      setStatus('连接中');
+      await call('heartbeat', '/api/v1/apps/heartbeat', {
+        method: 'POST',
+        body: JSON.stringify({ appId: state.appId, instanceId: 'demo-chat', ttlSeconds: 300 }),
+      });
+      $('sessionInfo').textContent = `${state.appId} · ${state.customerId} · ${state.conversationId}`;
+      $('convIdDisplay').textContent = `会话 ID: ${state.conversationId}`;
+      state.lastSeq = 0;
+      state.oldestSeq = 0;
+      state.hasMore = true;
+      await loadLatestPage();
+      saveSession();
+      setStatus('已连接', 'ok');
+      connectRealtime();
+      inputEl.focus();
+    } catch (error) {
+      setStatus('连接失败', 'error');
+      messagesEl.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    }
+  }
+  async function joinConversation() {
+    const convId = $('joinConvId').value.trim();
+    if (!convId) return;
+    try {
+      if (realtimeController) realtimeController.abort();
+      setStatus('加入中');
+      const conversation = await call('get conversation', `/api/v1/conversations/${convId}`);
+      state.appId = conversation.appId;
+      state.customerId = conversation.customerId;
+      state.conversationId = conversation.conversationId;
+      state.lastSeq = 0;
+      state.oldestSeq = 0;
+      state.hasMore = true;
+      state.messageMap.clear();
+      $('sessionInfo').textContent = `${state.appId} · ${state.customerId} · ${state.conversationId}`;
+      $('convIdDisplay').textContent = `会话 ID: ${state.conversationId}`;
+      await loadLatestPage();
+      saveSession();
+      setStatus('已连接', 'ok');
+      connectRealtime();
+      inputEl.focus();
+    } catch (error) {
+      setStatus('加入失败', 'error');
+      messagesEl.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    }
+  }
+  $('send').addEventListener('click', () => sendMessage($('role').value));
+  $('refresh').addEventListener('click', () => { if (state.conversationId) loadOlderMessages(); });
+  $('reset').addEventListener('click', initialize);
+  $('join').addEventListener('click', joinConversation);
+  $('convIdDisplay').addEventListener('click', () => {
+    if (state.conversationId) navigator.clipboard.writeText(state.conversationId);
+  });
+  inputEl.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage($('role').value);
+    }
+  });
+  if (restoreSession()) {
+    reconnect();
+  } else {
+    initialize();
+  }
+</script>
+</body>
+</html>
