@@ -152,13 +152,13 @@
   async function loadMessages() {
     if (!state.hasMore) return;
     const suffix = state.lastSeq > 0 ? `?afterSeq=${state.lastSeq}` : '';
-    const items = await call('load messages', `/api/v1/conversations/${state.conversationId}/messages${suffix}`);
+    const items = await call('load messages', `/api/v1/channels/${state.appId}/conversations/${state.conversationId}/messages${suffix}`);
     items.forEach(upsertMessage);
     renderMessages();
   }
   async function loadOlderMessages() {
     if (!state.hasMore || !state.oldestSeq) return;
-    const url = `/api/v1/conversations/${state.conversationId}/messages?beforeSeq=${state.oldestSeq}&limit=20`;
+    const url = `/api/v1/channels/${state.appId}/conversations/${state.conversationId}/messages?beforeSeq=${state.oldestSeq}&limit=20`;
     const items = await call('load older messages', url);
     if (items.length === 0) {
       state.hasMore = false;
@@ -168,7 +168,7 @@
     renderMessages();
   }
   async function loadLatestPage() {
-    const url = `/api/v1/conversations/${state.conversationId}/messages?limit=20`;
+    const url = `/api/v1/channels/${state.appId}/conversations/${state.conversationId}/messages?limit=20`;
     const items = await call('load latest page', url);
     if (items.length < 20) state.hasMore = false;
     items.forEach(upsertMessage);
@@ -254,7 +254,7 @@
       state.oldestSeq = 0;
       state.hasMore = true;
       renderMessages();
-      const app = await call('register app', '/api/v1/apps/register', {
+      const app = await call('register app', '/admin/v1/apps/register', {
         method: 'POST',
         body: JSON.stringify({
           serviceKey: `demo-chat-${Date.now()}`,
@@ -265,27 +265,22 @@
         }),
       });
       state.appId = app.appId;
-      await call('heartbeat', '/api/v1/apps/heartbeat', {
+      await call('heartbeat', '/admin/v1/apps/heartbeat', {
         method: 'POST',
         body: JSON.stringify({ appId: state.appId, instanceId: 'demo-chat', ttlSeconds: 300 }),
       });
 
-      const customer = await call('create customer', '/api/v1/customers', {
-        method: 'POST',
-        body: JSON.stringify({ name: 'Demo Customer', channel: 'demo-chat' }),
-      });
-      state.customerId = customer.customerId;
-
-      const conversation = await call('create conversation', '/api/v1/conversations', {
+      const ensured = await call('ensure conversation', `/api/v1/channels/${state.appId}/conversations/ensure`, {
         method: 'POST',
         body: JSON.stringify({
-          appId: state.appId,
-          customerId: state.customerId,
+          customerExternalId: `demo-customer-${Date.now()}`,
+          customerName: 'Demo Customer',
           channel: 'demo-chat',
           subject: 'Demo Chat',
         }),
       });
-      state.conversationId = conversation.conversationId;
+      state.customerId = ensured.conversation.customerId;
+      state.conversationId = ensured.conversation.conversationId;
       $('sessionInfo').textContent = `${state.appId} · ${state.customerId} · ${state.conversationId}`;
       $('convIdDisplay').textContent = `会话 ID: ${state.conversationId}`;
       saveSession();
@@ -329,7 +324,7 @@
     try {
       if (realtimeController) realtimeController.abort();
       setStatus('连接中');
-      await call('heartbeat', '/api/v1/apps/heartbeat', {
+      await call('heartbeat', '/admin/v1/apps/heartbeat', {
         method: 'POST',
         body: JSON.stringify({ appId: state.appId, instanceId: 'demo-chat', ttlSeconds: 300 }),
       });
@@ -354,7 +349,7 @@
     try {
       if (realtimeController) realtimeController.abort();
       setStatus('加入中');
-      const conversation = await call('get conversation', `/api/v1/conversations/${convId}`);
+      const conversation = await call('get conversation', `/api/v1/channels/${state.appId}/conversations/${convId}`);
       state.appId = conversation.appId;
       state.customerId = conversation.customerId;
       state.conversationId = conversation.conversationId;

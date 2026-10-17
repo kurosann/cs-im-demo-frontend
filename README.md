@@ -28,11 +28,10 @@ CS_IM_BACKEND_URL=http://127.0.0.1:8080 npm run dev
 
 页面会依次调用：
 
-1. `/api/v1/apps/register`
-2. `/api/v1/apps/heartbeat`
-3. `/api/v1/customers`
-4. `/api/v1/conversations`
+1. `/admin/v1/apps/register`
+2. `/admin/v1/apps/heartbeat`
+3. `/api/v1/channels/:appId/conversations/ensure`
+4. `/api/v1/channels/:appId/conversations/:conversationId`
 5. `/api/v1/channels/:appId/messages`
-6. `/api/v1/messages/:id/status`
-7. `/api/v1/messages/:id`
-8. `/api/v1/channels/:appId/realtime`
+6. `/api/v1/channels/:appId/conversations/:conversationId/messages`
+7. `/api/v1/channels/:appId/realtime`
