@@ -45,7 +45,7 @@
     <header>
       <div>
         <h1>CS IM 聊天室</h1>
-        <p>独立前端联调 Demo，自动创建 App、客户和会话。</p>
+        <p>独立前端联调 Demo，自动创建 App、客户和会话。<a href="/relay">转发渠道 Demo</a></p>
       </div>
       <div class="status"><span id="dot" class="dot"></span><span id="status">初始化</span></div>
     </header>
@@ -152,14 +152,16 @@
   async function loadMessages() {
     if (!state.hasMore) return;
     const suffix = state.lastSeq > 0 ? `?afterSeq=${state.lastSeq}` : '';
-    const items = await call('load messages', `/api/v1/channels/${state.appId}/conversations/${state.conversationId}/messages${suffix}`);
+    const page = await call('load messages', `/api/v1/channels/${state.appId}/conversations/${state.conversationId}/messages${suffix}`);
+    const items = page.items ?? [];
     items.forEach(upsertMessage);
     renderMessages();
   }
   async function loadOlderMessages() {
     if (!state.hasMore || !state.oldestSeq) return;
     const url = `/api/v1/channels/${state.appId}/conversations/${state.conversationId}/messages?beforeSeq=${state.oldestSeq}&limit=20`;
-    const items = await call('load older messages', url);
+    const page = await call('load older messages', url);
+    const items = page.items ?? [];
     if (items.length === 0) {
       state.hasMore = false;
       return;
@@ -169,7 +171,8 @@
   }
   async function loadLatestPage() {
     const url = `/api/v1/channels/${state.appId}/conversations/${state.conversationId}/messages?limit=20`;
-    const items = await call('load latest page', url);
+    const page = await call('load latest page', url);
+    const items = page.items ?? [];
     if (items.length < 20) state.hasMore = false;
     items.forEach(upsertMessage);
     renderMessages();
@@ -257,7 +260,7 @@
       const app = await call('register app', '/admin/v1/apps/register', {
         method: 'POST',
         body: JSON.stringify({
-          serviceKey: `demo-chat-${Date.now()}`,
+          serviceKey: 'demo-chat-frontend',
           displayName: 'Demo Chat Frontend',
           kind: 'inbound',
           version: '0.1.0',
@@ -349,7 +352,12 @@
     try {
       if (realtimeController) realtimeController.abort();
       setStatus('加入中');
-      const conversation = await call('get conversation', `/api/v1/channels/${state.appId}/conversations/${convId}`);
+      let conversation;
+      try {
+        conversation = await call('get conversation', `/api/v1/channels/${state.appId}/conversations/${convId}`);
+      } catch (_) {
+        conversation = await call('resolve conversation', `/admin/v1/conversations/${convId}`);
+      }
       state.appId = conversation.appId;
       state.customerId = conversation.customerId;
       state.conversationId = conversation.conversationId;

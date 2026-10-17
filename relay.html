@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CS IM 转发渠道 Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #f6f7fb; color: #0f172a; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(1080px, calc(100% - 28px)); margin: 0 auto; padding: 24px 0 36px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+    p { margin: 6px 0 0; color: #64748b; font-size: 14px; }
+    .status { display: inline-flex; align-items: center; gap: 8px; height: 32px; border-radius: 999px; border: 1px solid #e2e8f0; background: white; padding: 0 14px; font-size: 13px; font-weight: 600; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; }
+    .dot.ok { background: #22c55e; }
+    .dot.error { background: #ef4444; }
+    .chat { height: calc(100vh - 150px); min-height: 520px; display: flex; flex-direction: column; overflow: hidden; background: white; border: 1px solid #e2e8f0; border-radius: 22px; box-shadow: 0 24px 70px -50px rgba(15, 23, 42, .55); }
+    .top { padding: 16px 18px; border-bottom: 1px solid #edf2f7; display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+    .top strong { font-size: 15px; }
+    .meta { color: #64748b; font-size: 12px; overflow-wrap: anywhere; }
+    .messages { flex: 1; overflow: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+    .message { max-width: min(76%, 620px); display: flex; gap: 10px; }
+    .message.customer { margin-right: auto; }
+    .message.agent { margin-left: auto; flex-direction: row-reverse; }
+    .bubble { padding: 10px 13px; border-radius: 16px; border: 1px solid #edf2f7; background: #f8fafc; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+    .message.agent .bubble { background: #eff6ff; border-color: #dbeafe; }
+    .meta-line { margin-top: 5px; color: #94a3b8; font-size: 11px; }
+    .empty { flex: 1; display: grid; place-items: center; color: #94a3b8; text-align: center; padding: 24px; }
+    .composer { padding: 14px; border-top: 1px solid #edf2f7; background: white; }
+    textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid #cbd5e1; border-radius: 14px; padding: 12px; font-size: 14px; line-height: 1.6; font-family: inherit; outline: none; }
+    textarea:focus { border-color: #94a3b8; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+    .hint { font-size: 12px; color: #94a3b8; }
+    .controls { display: flex; gap: 8px; align-items: center; }
+    input { height: 36px; border: 1px solid #cbd5e1; border-radius: 10px; padding: 0 10px; font-size: 13px; background: white; }
+    button { border: 0; border-radius: 10px; background: #0f172a; color: white; height: 36px; padding: 0 15px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    @media (max-width: 720px) { .chat { height: calc(100vh - 120px); } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>CS IM 转发渠道 Demo</h1>
+        <p>接收客户消息，发送客服消息。仅使用转发身份调用最小接口。</p>
+      </div>
+      <div class="status"><span id="dot" class="dot"></span><span id="status">未连接</span></div>
+    </header>
+    <section class="chat">
+      <div class="top">
+        <div>
+          <strong>转发渠道会话</strong>
+          <div class="meta" id="sessionInfo">粘贴会话 ID 加入</div>
+          <div class="meta" id="relayInfo">转发身份: relay-account</div>
+        </div>
+        <div class="controls">
+          <input id="token" value="dev-relay-token" spellcheck="false">
+          <input id="conversationId" placeholder="粘贴会话 ID" spellcheck="false" style="width:260px">
+          <button id="join">加入会话</button>
+          <button id="loadOlder" disabled>加载更早</button>
+        </div>
+      </div>
+      <div class="messages" id="messages">
+        <div class="empty">等待客户消息...</div>
+      </div>
+      <div class="composer">
+        <textarea id="input" placeholder="发送客服消息，Enter 发送，Shift + Enter 换行"></textarea>
+        <div class="row">
+          <span class="hint">转发渠道只能发送客服消息</span>
+          <div class="controls"><button id="send">发送客服消息</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const messagesEl = $('messages');
+    const inputEl = $('input');
+    const state = { conversationId: '', messageMap: new Map(), sending: false, oldestSeq: 0, hasMore: true };
+    let realtimeController = null;
+
+    function setStatus(text, kind = 'pending') {
+      $('status').textContent = text;
+      $('dot').className = `dot ${kind}`;
+    }
+    function escapeHtml(value) {
+      return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+    }
+    function roleLabel(role) {
+      return { customer: '客户', agent: '客服', ai: 'AI', system: '系统' }[role] || role;
+    }
+    function renderMessages() {
+      const items = [...state.messageMap.values()].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+      if (!items.length) {
+        messagesEl.innerHTML = '<div class="empty">等待客户消息...</div>';
+        return;
+      }
+      messagesEl.innerHTML = items.map((item) => {
+        const role = item.sender?.role || 'system';
+        const time = item.createdAt ? new Date(item.createdAt).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+        return `
+          <div class="message ${role}">
+            <div class="bubble">
+              <div>${escapeHtml(item.text || '')}</div>
+              <div class="meta-line">${escapeHtml(roleLabel(role))} · ${escapeHtml(time)} · ${escapeHtml(item.status || 'received')}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+    function upsertMessage(message) {
+      if (message?.messageId) {
+        state.messageMap.set(message.messageId, message);
+        if (state.oldestSeq === 0 || message.seq < state.oldestSeq) state.oldestSeq = message.seq;
+        renderMessages();
+        $('loadOlder').disabled = !state.hasMore;
+      }
+    }
+    async function call(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: {
+          Authorization: `Bearer ${$('token').value.trim()}`,
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        },
+      });
+      const body = await response.json();
+      if (!response.ok || body.code !== 'OK') {
+        throw new Error(body.message || `${response.status} ${body.code || 'REQUEST_FAILED'}`);
+      }
+      return body.data;
+    }
+    async function send() {
+      const text = inputEl.value.trim();
+      if (!text || state.sending || !state.conversationId) return;
+      state.sending = true;
+      $('send').disabled = true;
+      try {
+        const message = await call('/api/v1/relays/messages', {
+          method: 'POST',
+          body: JSON.stringify({ conversationId: state.conversationId, type: 'text', text }),
+        });
+        upsertMessage(message);
+        inputEl.value = '';
+        inputEl.focus();
+      } catch (error) {
+        setStatus('发送失败', 'error');
+        console.error(error);
+      } finally {
+        state.sending = false;
+        $('send').disabled = false;
+      }
+    }
+    async function loadLatestPage() {
+      const page = await call(`/api/v1/relays/conversations/${state.conversationId}/messages?limit=20`);
+      page.items?.forEach(upsertMessage);
+      state.hasMore = page.hasMore;
+      state.oldestSeq = page.nextBeforeSeq || state.oldestSeq;
+      renderMessages();
+      $('loadOlder').disabled = !state.hasMore;
+    }
+    async function loadOlderMessages() {
+      if (!state.hasMore || !state.oldestSeq) return;
+      const page = await call(`/api/v1/relays/conversations/${state.conversationId}/messages?limit=20&beforeSeq=${state.oldestSeq}`);
+      page.items?.forEach(upsertMessage);
+      state.hasMore = page.hasMore;
+      state.oldestSeq = page.nextBeforeSeq || state.oldestSeq;
+      renderMessages();
+      $('loadOlder').disabled = !state.hasMore;
+    }
+    async function connectRealtime() {
+      if (realtimeController) realtimeController.abort();
+      realtimeController = new AbortController();
+      try {
+        const response = await fetch('/api/v1/relays/realtime', {
+          headers: { Authorization: `Bearer ${$('token').value.trim()}` },
+          signal: realtimeController.signal,
+        });
+        if (!response.ok || !response.body) throw new Error(`realtime failed: ${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let boundary = buffer.indexOf('\n\n');
+          while (boundary >= 0) {
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            boundary = buffer.indexOf('\n\n');
+            const line = frame.split('\n').find((item) => item.startsWith('data: '));
+            if (!line) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === 'message.created' && event.data.conversationId === state.conversationId) upsertMessage(event.data);
+            } catch (error) { console.error(error); }
+          }
+        }
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        setStatus('实时连接断开', 'error');
+        console.error(error);
+      }
+    }
+    function join() {
+      const conversationId = $('conversationId').value.trim();
+      if (!conversationId) return;
+      state.conversationId = conversationId;
+      state.messageMap.clear();
+      state.oldestSeq = 0;
+      state.hasMore = true;
+      renderMessages();
+      $('sessionInfo').textContent = `会话: ${conversationId}`;
+      setStatus('已连接', 'ok');
+      loadLatestPage();
+      connectRealtime();
+      inputEl.focus();
+    }
+    $('join').addEventListener('click', join);
+    $('loadOlder').addEventListener('click', loadOlderMessages);
+    $('send').addEventListener('click', send);
+    inputEl.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        send();
+      }
+    });
+  </script>
+</body>
+</html>

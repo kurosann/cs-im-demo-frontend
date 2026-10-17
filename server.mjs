@@ -59,6 +59,20 @@ async function sendIndex(res) {
   }
 }
 
+async function sendFile(res, filePath) {
+  try {
+    const html = await readFile(filePath, "utf8");
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    res.end(html);
+  } catch {
+    res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("page is missing");
+  }
+}
+
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
@@ -69,6 +83,11 @@ createServer(async (req, res) => {
 
   if (url.pathname === "/" || url.pathname === "/index.html") {
     await sendIndex(res);
+    return;
+  }
+
+  if (url.pathname === "/relay" || url.pathname === "/relay.html") {
+    await sendFile(res, join(root, "relay.html"));
     return;
   }
 
