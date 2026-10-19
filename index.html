@@ -26,6 +26,7 @@
     .bubble { padding: 10px 13px; border-radius: 16px; border: 1px solid #edf2f7; background: #f8fafc; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
     .message.agent .bubble { background: #eff6ff; border-color: #dbeafe; }
     .meta-line { margin-top: 5px; color: #94a3b8; font-size: 11px; }
+    .bubble img, .bubble video { display: block; max-width: min(100%, 360px); border-radius: 12px; margin-bottom: 8px; }
     .empty { flex: 1; display: grid; place-items: center; color: #94a3b8; text-align: center; padding: 24px; }
     .composer { padding: 14px; border-top: 1px solid #edf2f7; background: white; }
     textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid #cbd5e1; border-radius: 14px; padding: 12px; font-size: 14px; line-height: 1.6; font-family: inherit; outline: none; }
@@ -73,8 +74,14 @@
       <div class="composer">
         <textarea id="input" placeholder="输入消息，Enter 发送，Shift + Enter 换行"></textarea>
         <div class="row">
-          <span class="hint">Enter 发送</span>
+          <span class="hint">填写媒体链接后按类型发送；IM 不提供文件上传</span>
           <div class="controls">
+            <input id="mediaUrl" placeholder="粘贴图片 / 文件 / 视频 URL" style="width:280px" spellcheck="false">
+            <select id="mediaType">
+              <option value="image">图片</option>
+              <option value="file">文件</option>
+              <option value="video">视频</option>
+            </select>
             <select id="role">
               <option value="customer">客户发送</option>
               <option value="agent">客服发送</option>
@@ -130,16 +137,24 @@
     messagesEl.innerHTML = items.map((item) => {
       const role = item.sender?.role || 'system';
       const time = item.createdAt ? new Date(item.createdAt).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+      const media = item.content?.url ? messageMedia(item) : '';
       return `
         <div class="message ${role}">
           <div class="bubble">
-            <div>${escapeHtml(item.text || '')}</div>
+            ${media || `<div>${escapeHtml(item.text || '')}</div>`}
             <div class="meta-line">${escapeHtml(roleLabel(role))} · ${escapeHtml(time)} · ${escapeHtml(item.status || 'received')}</div>
           </div>
         </div>
       `;
     }).join('');
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+  function messageMedia(item) {
+    const url = escapeHtml(item.content.url);
+    const caption = item.text ? `<div>${escapeHtml(item.text)}</div>` : '';
+    if (item.type === 'image') return `<img src="${url}" alt="${escapeHtml(item.content.fileName || '图片')}">${caption}`;
+    if (item.type === 'video') return `<video src="${url}" controls preload="metadata"></video>${caption}`;
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.content.fileName || '打开文件')}</a>${caption}`;
   }
   function upsertMessage(message) {
     if (message?.messageId) {
@@ -179,7 +194,8 @@
   }
   async function sendMessage(role) {
     const text = inputEl.value.trim();
-    if (!text || state.sending) return;
+    const mediaURL = $('mediaUrl').value.trim();
+    if ((!text && !mediaURL) || state.sending) return;
     if (role !== 'customer') {
       setStatus('Demo 渠道只能发送客户消息', 'error');
       return;
@@ -188,23 +204,26 @@
     $('send').disabled = true;
     try {
       const externalID = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const payload = {
+        conversationId: state.conversationId,
+        customerId: state.customerId,
+        sender: { role: 'customer', id: state.customerId },
+        type: mediaURL ? $('mediaType').value : 'text',
+        text,
+        source: {
+          appId: state.appId,
+          externalId: externalID,
+          sentAt: new Date().toISOString(),
+        },
+      };
+      if (mediaURL) payload.content = { url: mediaURL };
       const message = await call('send customer message', `/api/v1/channels/${state.appId}/messages`, {
         method: 'POST',
-        body: JSON.stringify({
-          conversationId: state.conversationId,
-          customerId: state.customerId,
-          sender: { role: 'customer', id: state.customerId },
-          type: 'text',
-          text,
-          source: {
-            appId: state.appId,
-            externalId: externalID,
-            sentAt: new Date().toISOString(),
-          },
-        }),
+        body: JSON.stringify(payload),
       });
       upsertMessage(message);
       inputEl.value = '';
+      $('mediaUrl').value = '';
       inputEl.focus();
     } catch (error) {
       setStatus('发送失败', 'error');
