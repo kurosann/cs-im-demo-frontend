@@ -59,7 +59,8 @@
           <div class="meta conv-id" id="convIdDisplay" title="点击复制会话 ID" style="cursor:pointer; color:#2563eb; font-weight:600;"></div>
         </div>
         <div class="controls">
-          <input id="token" value="dev-access-token" spellcheck="false">
+          <input id="appId" placeholder="AppID" spellcheck="false" style="width:180px">
+          <input id="token" placeholder="SecretKey (csim_...)" spellcheck="false" style="width:260px">
           <input id="joinConvId" placeholder="粘贴会话 ID" spellcheck="false" style="width:220px">
           <button id="join" class="secondary">加入会话</button>
           <button id="refresh" class="secondary">加载更早</button>
@@ -270,28 +271,15 @@
   async function initialize() {
     try {
       if (realtimeController) realtimeController.abort();
+      const appId = $('appId').value.trim();
+      if (!appId || !$('token').value.trim()) throw new Error('请填写管理端签发的 AppID 和 SecretKey');
+      state.appId = appId;
       setStatus('初始化中');
       state.messageMap.clear();
       state.lastSeq = 0;
       state.oldestSeq = 0;
       state.hasMore = true;
       renderMessages();
-      const app = await call('register app', '/admin/v1/apps/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          serviceKey: 'demo-chat-frontend',
-          displayName: 'Demo Chat Frontend',
-          kind: 'inbound',
-          version: '0.1.0',
-          capabilities: ['text'],
-        }),
-      });
-      state.appId = app.appId;
-      await call('heartbeat', '/admin/v1/apps/heartbeat', {
-        method: 'POST',
-        body: JSON.stringify({ appId: state.appId, instanceId: 'demo-chat', ttlSeconds: 300 }),
-      });
-
       const ensured = await call('ensure conversation', `/api/v1/channels/${state.appId}/conversations/ensure`, {
         method: 'POST',
         body: JSON.stringify({
@@ -334,6 +322,7 @@
       const saved = JSON.parse(raw);
       if (!saved.conversationId) return false;
       state.appId = saved.appId;
+      $('appId').value = saved.appId || '';
       state.customerId = saved.customerId;
       state.conversationId = saved.conversationId;
       state.lastSeq = saved.lastSeq ?? 0;
@@ -346,10 +335,6 @@
     try {
       if (realtimeController) realtimeController.abort();
       setStatus('连接中');
-      await call('heartbeat', '/admin/v1/apps/heartbeat', {
-        method: 'POST',
-        body: JSON.stringify({ appId: state.appId, instanceId: 'demo-chat', ttlSeconds: 300 }),
-      });
       $('sessionInfo').textContent = `${state.appId} · ${state.customerId} · ${state.conversationId}`;
       $('convIdDisplay').textContent = `会话 ID: ${state.conversationId}`;
       state.lastSeq = 0;
@@ -372,11 +357,7 @@
       if (realtimeController) realtimeController.abort();
       setStatus('加入中');
       let conversation;
-      try {
-        conversation = await call('get conversation', `/api/v1/channels/${state.appId}/conversations/${convId}`);
-      } catch (_) {
-        conversation = await call('resolve conversation', `/admin/v1/conversations/${convId}`);
-      }
+      conversation = await call('get conversation', `/api/v1/channels/${state.appId}/conversations/${convId}`);
       state.appId = conversation.appId;
       state.customerId = conversation.customerId;
       state.conversationId = conversation.conversationId;

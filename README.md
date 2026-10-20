@@ -38,15 +38,15 @@ PORT=3100 npm run dev
 /ws/
 ```
 
-Demo 使用开发 Token：
+Demo 使用管理端「渠道接入」签发的业务渠道凭证：
 
-- 业务渠道：`dev-access-token`
+- 业务渠道：填入 `AppID` 和 `SecretKey`
 - 转发渠道：`dev-relay-token`
 
 ## 使用流程
 
-1. 启动 `cs-im-server`。
-2. 打开 `/`，注册或连接业务 App，进入会话并发送客户消息。
+1. 启动 `cs-im-server`，登录正式 Web 并在「渠道接入」创建业务 App、签发 SecretKey。
+2. 打开 `/`，填入 `AppID` 和 `SecretKey`，进入会话并发送客户消息。
 3. 打开 `/relay`，输入同一个会话 ID，查看客户消息并回复客服消息。
 4. 回到 `/` 验证客服消息能通过实时订阅收到。
 5. 刷新页面时可通过历史消息接口找回既有会话记录。
